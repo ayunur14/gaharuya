@@ -5,7 +5,7 @@
                 🕌 Arabian Oud Collection
             </h2>
             <div class="flex gap-2">
-                @if (Auth::user()->isSuperAdmin())
+                @if (Auth::check() && Auth::user()->isSuperAdmin())
                     <a href="/produk/tambah" class="inline-flex items-center px-4 py-2 bg-green-600 text-white text-xs font-semibold rounded-md hover:bg-green-700 transition">
                         + Tambah Produk
                     </a>
@@ -24,7 +24,7 @@
         </div>
     </x-slot>
 
-    <div class="py-10" x-data="cartModal()" @keydown.escape.window="close()">
+    <div class="py-10" x-data="cartModal({{ Auth::check() ? 'true' : 'false' }})" @keydown.escape.window="close()">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
 
             @if (session('success'))
@@ -97,17 +97,38 @@
                         </template>
                     </div>
                     <div class="p-5">
+                        @if ($p->sku)
+                            <p class="text-xs text-gray-400 font-mono mb-1">{{ $p->sku }}</p>
+                        @endif
                         <h3 class="text-lg font-semibold text-gray-800">{{ $p->name }}</h3>
                         <p class="text-sm text-gray-500 mt-1">{{ $p->description }}</p>
-                        <p class="text-indigo-600 font-bold mt-2">Rp {{ number_format($p->price) }}</p>
+                        <div class="flex items-center justify-between mt-2">
+                            <p class="text-indigo-600 font-bold">Rp {{ number_format($p->price) }}</p>
+                            @if ($p->stock > 0)
+                                <span class="text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-full px-2 py-0.5">
+                                    Stok: {{ $p->stock }}
+                                </span>
+                            @else
+                                <span class="text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-full px-2 py-0.5">
+                                    Stok Habis
+                                </span>
+                            @endif
+                        </div>
 
                         <div class="flex gap-2 mt-4 flex-wrap">
+                            @if ($p->stock > 0)
                             <button type="button"
-                                @click="show({ id: {{ $p->id }}, name: @js($p->name), price: {{ (int)$p->price }}, desc: @js($p->description), images: @js($cardImages) })"
+                                @click="show({ id: {{ $p->id }}, name: @js($p->name), price: {{ (int)$p->price }}, stock: {{ $p->stock }}, desc: @js($p->description), images: @js($cardImages) })"
                                 class="px-3 py-1.5 text-xs bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition">
                                 Beli
                             </button>
-                            @if (Auth::user()->isSuperAdmin())
+                            @else
+                            <button type="button" disabled
+                                class="px-3 py-1.5 text-xs bg-gray-300 text-gray-500 rounded-md cursor-not-allowed">
+                                Stok Habis
+                            </button>
+                            @endif
+                            @if (Auth::check() && Auth::user()->isSuperAdmin())
                                 <a href="/edit/{{ $p->id }}" class="px-3 py-1.5 text-xs bg-yellow-400 text-gray-800 rounded-md hover:bg-yellow-500 transition">
                                     Edit
                                 </a>
@@ -172,11 +193,12 @@
                         <div class="flex items-center gap-2">
                             <button type="button" @click="qty = Math.max(1, qty - 1)"
                                 class="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center text-gray-700 hover:bg-gray-100 transition font-bold">−</button>
-                            <input type="number" x-model.number="qty" min="1" max="99"
+                            <input type="number" x-model.number="qty" min="1" :max="product.stock"
                                 class="w-14 text-center border border-gray-300 rounded-lg py-1 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                            <button type="button" @click="qty = Math.min(99, qty + 1)"
+                            <button type="button" @click="qty = Math.min(product.stock, qty + 1)"
                                 class="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center text-gray-700 hover:bg-gray-100 transition font-bold">+</button>
                         </div>
+                        <span class="text-xs text-gray-400">Tersedia: <span x-text="product.stock"></span></span>
                     </div>
 
                     <!-- Total -->
@@ -205,12 +227,16 @@
 </x-app-layout>
 
 <script>
-function cartModal() {
+function cartModal(isLoggedIn) {
     return {
         open: false,
-        product: { id: 0, name: '', price: 0, desc: '', images: [] },
+        product: { id: 0, name: '', price: 0, stock: 1, desc: '', images: [] },
         qty: 1,
         show(data) {
+            if (!isLoggedIn) {
+                window.location.href = '{{ route('login') }}';
+                return;
+            }
             this.product = data;
             this.qty = 1;
             this.open = true;

@@ -11,7 +11,27 @@
                 <form method="POST" action="/update/{{ $product->id }}" enctype="multipart/form-data">
                     @csrf
 
-                    <div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Kode Barang (SKU)</label>
+                            <input type="text" name="sku" value="{{ $product->sku }}"
+                                class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                                placeholder="Contoh: GHR-001">
+                            @error('sku')
+                                <p class="text-red-500 text-xs mt-1">{{ $message }}</p>
+                            @enderror
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Stok</label>
+                            <input type="number" name="stock" value="{{ $product->stock }}" min="0"
+                                class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
+                            @error('stock')
+                                <p class="text-red-500 text-xs mt-1">{{ $message }}</p>
+                            @enderror
+                        </div>
+                    </div>
+
+                    <div class="mt-4">
                         <label class="block text-sm font-medium text-gray-700 mb-1">Nama Produk</label>
                         <input type="text" name="name" value="{{ $product->name }}"
                             class="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent">

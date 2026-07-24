@@ -15,6 +15,9 @@ return Application::configure(basePath: dirname(__DIR__))
             'authsimple' => \App\Http\Middleware\AuthSimple::class,
             'super_admin' => \App\Http\Middleware\SuperAdmin::class,
         ]);
+        $middleware->validateCsrfTokens(except: [
+            'midtrans/callback',
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
         //

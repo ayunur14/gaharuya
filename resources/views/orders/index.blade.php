@@ -19,16 +19,6 @@
                 </div>
             @endif
 
-            {{-- Info Rekening Bank --}}
-            <div class="bg-green-50 border border-green-200 rounded-xl px-5 py-4">
-                <p class="text-sm font-bold text-green-800 mb-2">🏦 Informasi Pembayaran</p>
-                <div class="flex flex-wrap gap-x-8 gap-y-1 text-sm text-green-900">
-                    <div><span class="font-medium">Bank</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: <span class="font-semibold">Bank Central Asia (BCA)</span></div>
-                    <div><span class="font-medium">No. Rekening</span> : <span class="font-semibold tracking-widest">400011223344</span></div>
-                    <div><span class="font-medium">Atas Nama</span>&nbsp;&nbsp; : <span class="font-semibold">PT Gaharu Indonesia</span></div>
-                </div>
-            </div>
-
             @if ($orders->isEmpty())
                 <div class="bg-white rounded-xl border border-gray-200 p-16 text-center text-gray-500">
                     <p class="text-4xl mb-3">📋</p>
@@ -50,7 +40,7 @@
                         $c = $colorMap[$color] ?? $colorMap['gray'];
                     @endphp
 
-                    <div x-data="{ showProof: {{ session('proof_order_id') == $order->id ? 'true' : 'false' }}, showItems: false, showPreview: false, showEdit: false }"
+                    <div x-data="{ showItems: false, showEdit: false }"
                          class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
 
                         {{-- Header pesanan --}}
@@ -60,6 +50,11 @@
                                 <span class="text-xs {{ $c['bg'] }} {{ $c['text'] }} {{ $c['border'] }} border rounded-full px-3 py-1 font-semibold">
                                     {{ $order->statusLabel() }}
                                 </span>
+                                @if ($order->payment_method)
+                                    <span class="text-xs bg-gray-100 text-gray-600 border border-gray-200 rounded-full px-2 py-1">
+                                        {{ strtoupper(str_replace('_', ' ', $order->payment_method)) }}
+                                    </span>
+                                @endif
                                 @if (Auth::user()->isSuperAdmin())
                                     <span class="text-xs text-gray-500">
                                         {{ $order->user->name ?: $order->user->username }}
@@ -118,74 +113,27 @@
 
                             <div class="flex flex-wrap gap-2 items-center">
 
-                                {{-- Bukti bayar: lihat (semua role) --}}
-                                @if ($order->payment_proof)
-                                    @php
-                                        $proofUrl  = route('orders.proofView', $order->id);
-                                        $ext       = strtolower(pathinfo($order->payment_proof, PATHINFO_EXTENSION));
-                                        $isImage   = in_array($ext, ['jpg','jpeg','png','webp']);
-                                    @endphp
-
-                                    @if ($isImage)
-                                        {{-- Preview inline untuk gambar --}}
-                                        <button @click="showPreview = true"
-                                            class="px-3 py-1.5 text-xs bg-gray-100 text-gray-700 border border-gray-300 rounded-md hover:bg-gray-200 transition">
-                                            🧾 Lihat Bukti Bayar
+                                {{-- Tombol Bayar Sekarang (user, status pending_payment) --}}
+                                @if (!Auth::user()->isSuperAdmin() && $order->status === 'pending_payment')
+                                    @if ($order->snap_token)
+                                        <button
+                                            onclick="payOrder('{{ $order->snap_token }}')"
+                                            class="px-4 py-1.5 text-xs bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition font-semibold">
+                                            💳 Bayar Sekarang
                                         </button>
-
-                                        {{-- Modal preview gambar --}}
-                                        <div x-show="showPreview"
-                                             style="display:none"
-                                             class="fixed inset-0 z-50 flex items-center justify-center p-4"
-                                             @click.self="showPreview = false"
-                                             x-transition:enter="transition ease-out duration-200"
-                                             x-transition:enter-start="opacity-0"
-                                             x-transition:enter-end="opacity-100"
-                                             x-transition:leave="transition ease-in duration-150"
-                                             x-transition:leave-start="opacity-100"
-                                             x-transition:leave-end="opacity-0">
-                                            <div class="absolute inset-0 bg-black/70"></div>
-                                            <div class="relative z-10 bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden"
-                                                 @click.stop
-                                                 x-transition:enter="transition ease-out duration-200"
-                                                 x-transition:enter-start="opacity-0 scale-95"
-                                                 x-transition:enter-end="opacity-100 scale-100">
-                                                <div class="flex items-center justify-between px-5 py-3 border-b border-gray-100">
-                                                    <span class="text-sm font-semibold text-gray-800">🧾 Bukti Pembayaran — Pesanan #{{ $order->id }}</span>
-                                                    <div class="flex items-center gap-2">
-                                                        <a href="{{ $proofUrl }}" target="_blank"
-                                                           class="text-xs text-indigo-600 hover:text-indigo-800 font-medium">
-                                                            Buka di tab baru ↗
-                                                        </a>
-                                                        <button @click="showPreview = false" class="text-gray-400 hover:text-gray-700 text-xl leading-none ml-2">&times;</button>
-                                                    </div>
-                                                </div>
-                                                <div class="p-4 bg-gray-50 flex items-center justify-center min-h-48">
-                                                    <img src="{{ $proofUrl }}"
-                                                         alt="Bukti Pembayaran #{{ $order->id }}"
-                                                         class="max-w-full max-h-[60vh] rounded-lg object-contain shadow">
-                                                </div>
-                                            </div>
-                                        </div>
                                     @else
-                                        {{-- PDF: buka di tab baru --}}
-                                        <a href="{{ $proofUrl }}" target="_blank"
-                                           class="px-3 py-1.5 text-xs bg-gray-100 text-gray-700 border border-gray-300 rounded-md hover:bg-gray-200 transition">
-                                            🧾 Lihat Bukti Bayar (PDF)
-                                        </a>
+                                        <form method="POST" action="{{ route('orders.generateSnap', $order->id) }}">
+                                            @csrf
+                                            <button type="submit"
+                                                class="px-4 py-1.5 text-xs bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition font-semibold">
+                                                💳 Bayar Sekarang
+                                            </button>
+                                        </form>
                                     @endif
                                 @endif
 
-                                {{-- Upload/ganti bukti bayar (semua user jika status memungkinkan; super admin tanpa batasan status) --}}
-                                @if (Auth::user()->isSuperAdmin() || in_array($order->status, ['pending_payment', 'waiting_confirmation']))
-                                    <button @click="showProof = !showProof; showEdit = false"
-                                        class="px-3 py-1.5 text-xs bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition">
-                                        {{ $order->payment_proof ? '🔄 Ganti Bukti' : '📤 Upload Bukti Bayar' }}
-                                    </button>
-                                @endif
-
-                                {{-- Tandai lunas (super admin, status waiting_confirmation) --}}
-                                @if (Auth::user()->isSuperAdmin() && $order->status === 'waiting_confirmation')
+                                {{-- Tandai lunas (super admin) --}}
+                                @if (Auth::user()->isSuperAdmin() && in_array($order->status, ['pending_payment', 'waiting_confirmation']))
                                     <form method="POST" action="{{ route('orders.markPaid', $order->id) }}"
                                           onsubmit="return confirm('Tandai pesanan #{{ $order->id }} sebagai Lunas?')">
                                         @csrf
@@ -208,7 +156,7 @@
                                     </form>
                                 @endif
 
-                                {{-- Batalkan Pesanan (user & super admin, selama belum lunas/dibatalkan) --}}
+                                {{-- Batalkan Pesanan --}}
                                 @if (!in_array($order->status, ['paid', 'cancelled']))
                                     <form method="POST" action="{{ route('orders.cancel', $order->id) }}"
                                           onsubmit="return confirm('Batalkan pesanan #{{ $order->id }}?')">
@@ -221,40 +169,6 @@
                                 @endif
                             </div>
                         </div>
-
-                        {{-- Form upload bukti bayar (inline, collapsible) --}}
-                        @if (Auth::user()->isSuperAdmin() || in_array($order->status, ['pending_payment', 'waiting_confirmation']))
-                        <div x-show="showProof" style="display:none"
-                             class="px-5 py-4 border-t border-gray-200 bg-indigo-50">
-                            <form method="POST" action="{{ route('orders.proof', $order->id) }}"
-                                  enctype="multipart/form-data" class="flex flex-wrap items-end gap-3">
-                                @csrf
-                                <div class="flex-1 min-w-[200px]">
-                                    <label class="block text-xs font-medium text-gray-700 mb-1">
-                                        File Bukti Pembayaran
-                                        <span class="text-gray-400 font-normal">(JPG, PNG, PDF · Maks 2MB)</span>
-                                    </label>
-                                    <input type="file" name="payment_proof" accept=".jpg,.jpeg,.png,.pdf" required
-                                        class="block w-full text-sm text-gray-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-indigo-100 file:text-indigo-700 hover:file:bg-indigo-200">
-                                    @error('payment_proof')
-                                        <p class="text-red-500 text-xs mt-1">{{ $message }}</p>
-                                    @enderror
-                                </div>
-                                <div class="flex gap-2">
-                                    <button type="button" @click="showProof = false"
-                                        class="px-3 py-1.5 text-xs border border-gray-300 rounded-md text-gray-600 hover:bg-gray-50 transition">
-                                        Batal
-                                    </button>
-                                    <button type="submit"
-                                        class="px-3 py-1.5 text-xs bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition font-semibold">
-                                        Kirim Bukti
-                                    </button>
-                                </div>
-                            </form>
-                        </div>
-                        @endif
-
-
 
                     </div>
                     @endforeach
@@ -282,5 +196,31 @@
                 el.title = 'Waktu lokal Anda: ' + formatted;
             } catch (e) {}
         });
+
+        function payOrder(snapToken) {
+            snap.pay(snapToken, {
+                onSuccess: function(result) {
+                    window.location.reload();
+                },
+                onPending: function(result) {
+                    window.location.reload();
+                },
+                onError: function(result) {
+                    alert('Pembayaran gagal. Silakan coba lagi.');
+                },
+                onClose: function() {
+                    // user tutup popup tanpa bayar, tidak perlu action
+                }
+            });
+        }
     </script>
+
+    @push('scripts')
+    @php
+        $snapJs = config('services.midtrans.is_production')
+            ? 'https://app.midtrans.com/snap/snap.js'
+            : 'https://app.sandbox.midtrans.com/snap/snap.js';
+    @endphp
+    <script src="{{ $snapJs }}" data-client-key="{{ config('services.midtrans.client_key') }}"></script>
+    @endpush
 </x-app-layout>

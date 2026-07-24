@@ -6,10 +6,19 @@ use App\Models\Order;
 use App\Models\Product;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
 class OrderController extends Controller
 {
+    private function configureMidtrans(): void
+    {
+        \Midtrans\Config::$serverKey    = config('services.midtrans.server_key');
+        \Midtrans\Config::$isProduction = config('services.midtrans.is_production');
+        \Midtrans\Config::$isSanitized  = true;
+        \Midtrans\Config::$is3ds        = true;
+    }
+
     /** Tampilkan daftar pesanan (user: milik sendiri, super admin: semua) */
     public function index()
     {
@@ -41,6 +50,9 @@ class OrderController extends Controller
         foreach ($cart as $id => $qty) {
             $p = $products->get((int) $id);
             if (!$p) continue;
+            if ($p->stock < $qty) {
+                return back()->with('error', "Stok {$p->name} tidak mencukupi (tersisa {$p->stock}).");
+            }
             $subtotal = $p->price * $qty;
             $total   += $subtotal;
             $items[]  = [
@@ -56,7 +68,12 @@ class OrderController extends Controller
             return back()->with('error', 'Tidak ada produk valid di keranjang.');
         }
 
-        Order::create([
+        // Kurangi stok
+        foreach ($items as $item) {
+            Product::where('id', $item['product_id'])->decrement('stock', $item['qty']);
+        }
+
+        $order = Order::create([
             'user_id' => Auth::id(),
             'items'   => $items,
             'total'   => $total,
@@ -64,77 +81,123 @@ class OrderController extends Controller
             'notes'   => $request->notes,
         ]);
 
+        // Generate Midtrans Snap token
+        try {
+            $this->configureMidtrans();
+
+            $itemDetails = array_map(fn($item) => [
+                'id'       => (string) $item['product_id'],
+                'price'    => (int) $item['price'],
+                'quantity' => (int) $item['qty'],
+                'name'     => substr($item['name'], 0, 50),
+            ], $items);
+
+            $user = Auth::user();
+            $params = [
+                'transaction_details' => [
+                    'order_id'    => 'ORDER-' . $order->id,
+                    'gross_amount' => (int) $total,
+                ],
+                'customer_details' => [
+                    'first_name' => $user->name ?? $user->username,
+                    'email'      => $user->email,
+                ],
+                'item_details' => $itemDetails,
+            ];
+
+            $snapToken = \Midtrans\Snap::getSnapToken($params);
+            $order->update(['snap_token' => $snapToken]);
+        } catch (\Exception $e) {
+            Log::error('Midtrans snap token error: ' . $e->getMessage());
+        }
+
         // Kosongkan keranjang
         session(['cart' => []]);
         Auth::user()->update(['cart' => []]);
 
         return redirect()->route('orders.index')
-            ->with('success', 'Pesanan berhasil dibuat! Silakan upload bukti pembayaran.');
+            ->with('success', 'Pesanan berhasil dibuat! Silakan selesaikan pembayaran.');
     }
 
-    /** Upload bukti pembayaran oleh user atau super admin */
-    public function uploadProof(Request $request, Order $order)
+    /** Generate ulang snap token untuk order yang belum punya token */
+    public function generateSnapToken(Order $order)
     {
-        // Super admin bisa upload untuk semua pesanan, user hanya milik sendiri
-        if (!Auth::user()->isSuperAdmin() && (int) $order->user_id !== (int) Auth::id()) {
-            abort(403);
-        }
-        if (!Auth::user()->isSuperAdmin() && !in_array($order->status, ['pending_payment', 'waiting_confirmation'])) {
-            return back()->with('error', 'Status pesanan tidak memungkinkan upload bukti.');
-        }
-
-        $validator = \Illuminate\Support\Facades\Validator::make($request->all(), [
-            'payment_proof' => 'required|file|mimes:jpg,jpeg,png,pdf|max:2048',
-        ], [
-            'payment_proof.required' => 'File bukti pembayaran wajib dipilih.',
-            'payment_proof.mimes'    => 'Format file harus JPG, PNG, atau PDF.',
-            'payment_proof.max'      => 'Ukuran file maksimal 2MB.',
-        ]);
-
-        if ($validator->fails()) {
-            return back()
-                ->withErrors($validator)
-                ->with('proof_order_id', $order->id);
-        }
-
-        // Hapus file lama jika ada
-        if ($order->payment_proof) {
-            Storage::disk('public')->delete($order->payment_proof);
-        }
-
-        $path = $request->file('payment_proof')->store('payment_proofs', 'public');
-
-        $order->update([
-            'payment_proof' => $path,
-            'status'        => 'waiting_confirmation',
-        ]);
-
-        return back()->with('success', 'Bukti pembayaran berhasil diupload. Menunggu konfirmasi admin.');
-    }
-
-    /** Stream file bukti pembayaran (bypass symlink issue pada php artisan serve) */
-    public function proofView(Order $order)
-    {
-        // Super admin bisa lihat semua, user hanya milik sendiri
-        if (!Auth::user()->isSuperAdmin() && (int) $order->user_id !== (int) Auth::id()) {
+        if ((int) $order->user_id !== (int) Auth::id() && !Auth::user()->isSuperAdmin()) {
             abort(403);
         }
 
-        if (!$order->payment_proof) {
-            abort(404, 'Bukti pembayaran tidak ditemukan.');
+        if ($order->status !== 'pending_payment') {
+            return back()->with('error', 'Pesanan ini tidak dalam status menunggu pembayaran.');
         }
 
-        $path = storage_path('app/public/' . $order->payment_proof);
+        try {
+            $this->configureMidtrans();
 
-        if (!file_exists($path)) {
-            abort(404, 'File tidak ditemukan.');
+            $itemDetails = array_map(fn($item) => [
+                'id'       => (string) $item['product_id'],
+                'price'    => (int) $item['price'],
+                'quantity' => (int) $item['qty'],
+                'name'     => substr($item['name'], 0, 50),
+            ], $order->items);
+
+            $user = Auth::user();
+            $params = [
+                'transaction_details' => [
+                    'order_id'     => 'ORDER-' . $order->id . '-' . time(),
+                    'gross_amount' => (int) $order->total,
+                ],
+                'customer_details' => [
+                    'first_name' => $user->name ?? $user->username,
+                    'email'      => $user->email,
+                ],
+                'item_details' => $itemDetails,
+            ];
+
+            $snapToken = \Midtrans\Snap::getSnapToken($params);
+            $order->update(['snap_token' => $snapToken]);
+
+            return back()->with('success', 'Silakan klik Bayar Sekarang untuk melanjutkan pembayaran.');
+        } catch (\Exception $e) {
+            Log::error('Midtrans regenerate snap token error: ' . $e->getMessage());
+            return back()->with('error', 'Gagal memuat halaman pembayaran. Coba lagi.');
+        }
+    }
+
+    /** Webhook callback dari Midtrans */
+    public function midtransCallback(Request $request)
+    {
+        $this->configureMidtrans();
+
+        try {
+            $notification = new \Midtrans\Notification();
+        } catch (\Exception $e) {
+            Log::error('Midtrans callback error: ' . $e->getMessage());
+            return response()->json(['message' => 'Invalid notification'], 400);
         }
 
-        $mimeType = mime_content_type($path);
-        return response()->file($path, [
-            'Content-Type'        => $mimeType,
-            'Content-Disposition' => 'inline; filename="' . basename($path) . '"',
-        ]);
+        $orderId = str_replace('ORDER-', '', $notification->order_id);
+        $order   = Order::find($orderId);
+
+        if (!$order) {
+            return response()->json(['message' => 'Order not found'], 404);
+        }
+
+        $transactionStatus = $notification->transaction_status;
+        $fraudStatus       = $notification->fraud_status ?? null;
+        $paymentType       = $notification->payment_type ?? null;
+
+        if ($transactionStatus === 'capture') {
+            $newStatus = $fraudStatus === 'accept' ? 'paid' : 'waiting_confirmation';
+            $order->update(['status' => $newStatus, 'payment_method' => $paymentType]);
+        } elseif ($transactionStatus === 'settlement') {
+            $order->update(['status' => 'paid', 'payment_method' => $paymentType]);
+        } elseif ($transactionStatus === 'pending') {
+            $order->update(['payment_method' => $paymentType]);
+        } elseif (in_array($transactionStatus, ['cancel', 'deny', 'expire', 'failure'])) {
+            $order->update(['status' => 'cancelled']);
+        }
+
+        return response()->json(['message' => 'OK']);
     }
 
     /** Super admin: edit status & catatan pesanan */
@@ -174,9 +237,6 @@ class OrderController extends Controller
         if (!Auth::user()->isSuperAdmin()) {
             abort(403);
         }
-        if ($order->status !== 'waiting_confirmation') {
-            return back()->with('error', 'Pesanan ini belum mengupload bukti pembayaran.');
-        }
 
         $order->update(['status' => 'paid']);
 
@@ -187,13 +247,17 @@ class OrderController extends Controller
     {
         $user = Auth::user();
 
-        // User biasa hanya bisa batalkan pesanannya sendiri
         if (!$user->isSuperAdmin() && (int)$order->user_id !== (int)$user->id) {
             abort(403);
         }
 
         if (in_array($order->status, ['paid', 'cancelled'])) {
             return back()->with('error', 'Pesanan ini tidak dapat dibatalkan.');
+        }
+
+        // Kembalikan stok
+        foreach ($order->items as $item) {
+            Product::where('id', $item['product_id'])->increment('stock', $item['qty']);
         }
 
         $order->update(['status' => 'cancelled']);

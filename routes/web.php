@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\Route;
 |--------------------------------------------------------------------------
 */
 Route::get('/', function () {
-    return redirect('/login');
+    return redirect('/dashboard');
 });
 
 /*
@@ -24,7 +24,7 @@ Route::get('/dashboard', function () {
     $products  = \App\Models\Product::latest()->get();
     $cartCount = array_sum(session('cart', []));
     return view('dashboard', compact('products', 'cartCount'));
-})->middleware('auth')->name('dashboard');
+})->name('dashboard');
 
 Route::post('/cart/add/{id}', function (\Illuminate\Http\Request $r, $id) {
     $qty  = max(1, (int) $r->input('qty', 1));
@@ -65,13 +65,16 @@ Route::get('/produk/tambah', function () {
 
 Route::post('/produk/tambah', function (\Illuminate\Http\Request $r) {
     $r->validate([
+        'sku'      => 'nullable|string|max:50|unique:products,sku',
         'name'     => 'required|string|max:255',
         'price'    => 'required|numeric|min:0',
+        'stock'    => 'required|integer|min:0',
         'desc'     => 'required|string|max:500',
         'images'   => 'nullable|array|max:5',
         'images.*' => 'image|mimes:jpg,jpeg,png,webp|max:2048',
     ], [
         'images.max' => 'Maksimal 5 gambar per produk.',
+        'sku.unique' => 'Kode barang sudah dipakai produk lain.',
     ]);
 
     $imagePaths = [];
@@ -87,8 +90,10 @@ Route::post('/produk/tambah', function (\Illuminate\Http\Request $r) {
     }
 
     \App\Models\Product::create([
+        'sku'         => $r->sku ?: null,
         'name'        => $r->name,
         'price'       => $r->price,
+        'stock'       => $r->stock,
         'description' => $r->desc,
         'images'      => $imagePaths,
     ]);
@@ -103,13 +108,16 @@ Route::get('/edit/{id}', function ($id) {
 
 Route::post('/update/{id}', function (\Illuminate\Http\Request $r, $id) {
     $r->validate([
+        'sku'      => 'nullable|string|max:50|unique:products,sku,' . $id,
         'name'     => 'required|string|max:255',
         'price'    => 'required|numeric|min:0',
+        'stock'    => 'required|integer|min:0',
         'desc'     => 'required|string|max:500',
         'images'   => 'nullable|array|max:5',
         'images.*' => 'image|mimes:jpg,jpeg,png,webp|max:2048',
     ], [
         'images.max' => 'Maksimal 5 gambar per produk.',
+        'sku.unique' => 'Kode barang sudah dipakai produk lain.',
     ]);
 
     $product = \App\Models\Product::findOrFail($id);
@@ -136,8 +144,10 @@ Route::post('/update/{id}', function (\Illuminate\Http\Request $r, $id) {
     }
 
     $product->update([
+        'sku'         => $r->sku ?: null,
         'name'        => $r->name,
         'price'       => $r->price,
+        'stock'       => $r->stock,
         'description' => $r->desc,
         'images'      => $imagePaths,
     ]);
@@ -187,6 +197,13 @@ require __DIR__.'/auth.php';
 
 /*
 |--------------------------------------------------------------------------
+| MIDTRANS WEBHOOK CALLBACK
+|--------------------------------------------------------------------------
+*/
+Route::post('/midtrans/callback', [OrderController::class, 'midtransCallback'])->name('midtrans.callback');
+
+/*
+|--------------------------------------------------------------------------
 | ORDERS (PESANAN)
 |--------------------------------------------------------------------------
 */
@@ -197,6 +214,7 @@ Route::middleware('auth')->group(function () {
     Route::post('/orders/{order}/proof',     [OrderController::class, 'uploadProof'])->name('orders.proof');
     Route::post('/orders/{order}/update',    [OrderController::class, 'update'])->name('orders.update');
     Route::post('/orders/{order}/delete',    [OrderController::class, 'destroy'])->name('orders.destroy');
-    Route::post('/orders/{order}/mark-paid', [OrderController::class, 'markPaid'])->name('orders.markPaid');
-    Route::post('/orders/{order}/cancel',    [OrderController::class, 'cancel'])->name('orders.cancel');
+    Route::post('/orders/{order}/mark-paid',      [OrderController::class, 'markPaid'])->name('orders.markPaid');
+    Route::post('/orders/{order}/cancel',         [OrderController::class, 'cancel'])->name('orders.cancel');
+    Route::post('/orders/{order}/generate-snap',  [OrderController::class, 'generateSnapToken'])->name('orders.generateSnap');
 });

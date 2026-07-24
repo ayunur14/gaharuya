@@ -37,9 +37,11 @@
             </main>
         </div>
 
+        @stack('scripts')
+
         @auth
         {{-- Floating WhatsApp Contact Center Button --}}
-        <a href="https://wa.me/6282299678800" target="_blank" rel="noopener noreferrer"
+        <a href="https://wa.me/6281210170394" target="_blank" rel="noopener noreferrer"
            title="Hubungi Contact Center via WhatsApp"
            class="fixed bottom-6 right-6 z-50 flex items-center gap-2 bg-green-500 hover:bg-green-600 active:bg-green-700 text-white text-sm font-semibold px-4 py-3 rounded-full shadow-lg hover:shadow-xl transition-all duration-200 group">
             <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
